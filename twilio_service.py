@@ -9,9 +9,13 @@ from twilio.rest import Client
 from twilio.base.exceptions import TwilioRestException
 import random
 from datetime import datetime, timedelta
+import logging
 
 # Load environment variables from .env file
 load_dotenv()
+
+# Get logger
+logger = logging.getLogger(__name__)
 
 
 class TwilioService:
@@ -38,17 +42,19 @@ class TwilioService:
         if self.enabled and self.account_sid and self.auth_token:
             try:
                 self.client = Client(self.account_sid, self.auth_token)
-                print("✅ Twilio service initialized successfully")
+                logger.info("✅ Twilio service initialized successfully")
+                logger.debug(f"Twilio account: {self.account_sid}, Phone numbers: {self.from_numbers}")
             except Exception as e:
-                print(f"⚠️ Twilio initialization failed: {e}")
+                logger.error(f"⚠️ Twilio initialization failed: {e}", exc_info=True)
                 self.client = None
         else:
             self.client = None
-            print("⚠️ Twilio service disabled or not configured")
+            logger.warning("⚠️ Twilio service disabled or not configured")
     
     def _get_next_from_number(self):
         """Select next Twilio 'from' number in round-robin order."""
         if not self.from_numbers:
+            logger.warning("No Twilio phone numbers configured")
             return None
         number = self.from_numbers[self._from_index % len(self.from_numbers)]
         # advance pointer for next call
@@ -65,7 +71,9 @@ class TwilioService:
         Returns:
             str: Generated OTP
         """
-        return ''.join([str(random.randint(0, 9)) for _ in range(length)])
+        otp = ''.join([str(random.randint(0, 9)) for _ in range(length)])
+        logger.debug(f"Generated OTP of length {length}")
+        return otp
     
     def send_otp(self, phone, otp, event_name=None):
         """
@@ -80,6 +88,7 @@ class TwilioService:
             tuple: (success: bool, message: str, message_sid: str)
         """
         if not self.enabled or not self.client:
+            logger.error("Twilio service is not enabled or configured")
             return False, "Twilio service is not enabled or configured", None
         
         # Format phone number for India (+91)
@@ -92,10 +101,12 @@ class TwilioService:
             message_body = f"Your verification OTP is: {otp}. Valid for 10 minutes. - Nexus Event Management"
         
         try:
+            logger.info(f"Attempting to send OTP to {formatted_phone}")
+            
             # Try sending from available numbers (round-robin with fallback)
             last_error = None
             attempts = len(self.from_numbers) if self.from_numbers else 1
-            for _ in range(attempts):
+            for attempt in range(attempts):
                 from_number = self._get_next_from_number()
                 try:
                     message = self.client.messages.create(
@@ -103,25 +114,25 @@ class TwilioService:
                         from_=from_number,
                         to=formatted_phone
                     )
-                    print(f"✅ OTP sent successfully from {from_number}! SID: {message.sid}")
+                    logger.info(f"✅ OTP sent successfully from {from_number} to {formatted_phone}. SID: {message.sid}")
                     return True, f"OTP sent to {phone}", message.sid
                 except TwilioRestException as e:
                     last_error = f"Twilio error from {from_number}: {e.msg}"
-                    print(f"❌ {last_error}")
-                    # try next number
+                    logger.warning(f"Attempt {attempt + 1}: {last_error}")
                     continue
             
             # If we got here, all attempts failed
+            logger.error(f"Failed to send OTP to {formatted_phone} after {attempts} attempts")
             return False, (last_error or "Failed to send OTP"), None
             
         except TwilioRestException as e:
             error_msg = f"Twilio error: {e.msg}"
-            print(f"❌ {error_msg}")
+            logger.error(error_msg, exc_info=True)
             return False, error_msg, None
             
         except Exception as e:
             error_msg = f"Failed to send OTP: {str(e)}"
-            print(f"❌ {error_msg}")
+            logger.error(error_msg, exc_info=True)
             return False, error_msg, None
     
     def send_sms(self, phone, message):
@@ -136,15 +147,18 @@ class TwilioService:
             tuple: (success: bool, response_message: str, message_sid: str)
         """
         if not self.enabled or not self.client:
+            logger.error("Twilio service is not enabled or configured")
             return False, "Twilio service is not enabled or configured", None
         
         formatted_phone = self._format_phone_number(phone)
         
         try:
+            logger.info(f"Sending SMS to {formatted_phone}")
+            
             # Try sending from available numbers (round-robin with fallback)
             last_error = None
             attempts = len(self.from_numbers) if self.from_numbers else 1
-            for _ in range(attempts):
+            for attempt in range(attempts):
                 from_number = self._get_next_from_number()
                 try:
                     sms = self.client.messages.create(
@@ -152,23 +166,24 @@ class TwilioService:
                         from_=from_number,
                         to=formatted_phone
                     )
-                    print(f"✅ SMS sent successfully from {from_number}! SID: {sms.sid}")
+                    logger.info(f"✅ SMS sent successfully from {from_number} to {formatted_phone}. SID: {sms.sid}")
                     return True, f"Message sent to {phone}", sms.sid
                 except TwilioRestException as e:
                     last_error = f"Twilio error from {from_number}: {e.msg}"
-                    print(f"❌ {last_error}")
+                    logger.warning(f"Attempt {attempt + 1}: {last_error}")
                     continue
             
+            logger.error(f"Failed to send SMS to {formatted_phone} after {attempts} attempts")
             return False, (last_error or "Failed to send SMS"), None
             
         except TwilioRestException as e:
             error_msg = f"Twilio error: {e.msg}"
-            print(f"❌ {error_msg}")
+            logger.error(error_msg, exc_info=True)
             return False, error_msg, None
             
         except Exception as e:
             error_msg = f"Failed to send SMS: {str(e)}"
-            print(f"❌ {error_msg}")
+            logger.error(error_msg, exc_info=True)
             return False, error_msg, None
     
     def send_event_reminder(self, phone, guest_name, event_name, event_date, event_time):
@@ -197,6 +212,7 @@ We look forward to seeing you!
 - Nexus Event Management
         """.strip()
         
+        logger.info(f"Sending event reminder to {guest_name} ({phone}) for {event_name}")
         return self.send_sms(phone, message)
     
     def send_rsvp_confirmation(self, phone, guest_name, event_name, rsvp_status):
@@ -217,6 +233,7 @@ We look forward to seeing you!
         else:
             message = f"Hi {guest_name}, we've received your RSVP for {event_name}. Thank you for letting us know. - Nexus Event"
         
+        logger.info(f"Sending RSVP {rsvp_status} confirmation to {guest_name} ({phone})")
         return self.send_sms(phone, message)
     
     def verify_otp(self, stored_otp, user_otp, created_at, expiry_minutes=10):
@@ -232,8 +249,11 @@ We look forward to seeing you!
         Returns:
             tuple: (success: bool, message: str)
         """
+        logger.debug(f"Verifying OTP")
+        
         # Check if OTP matches
         if str(stored_otp) != str(user_otp):
+            logger.warning("OTP mismatch - invalid OTP provided")
             return False, "Invalid OTP. Please check and try again."
         
         # Convert string to datetime if needed
@@ -241,13 +261,16 @@ We look forward to seeing you!
             try:
                 created_at = datetime.strptime(created_at, '%Y-%m-%d %H:%M:%S')
             except ValueError:
+                logger.error("Invalid OTP timestamp format")
                 return False, "Invalid OTP timestamp"
         
         # Check if OTP is expired
         expiry_time = created_at + timedelta(minutes=expiry_minutes)
         if datetime.utcnow() > expiry_time:
+            logger.warning(f"OTP expired - created at {created_at}, expired at {expiry_time}")
             return False, "OTP has expired. Please request a new one."
         
+        logger.info("OTP verified successfully")
         return True, "OTP verified successfully!"
     
     def _format_phone_number(self, phone):
@@ -267,10 +290,13 @@ We look forward to seeing you!
         if not phone.startswith('+'):
             if len(phone) == 10:
                 phone = f'+91{phone}'  # India country code
+                logger.debug(f"Formatted 10-digit phone to {phone}")
             elif len(phone) == 11 and phone.startswith('91'):
                 phone = f'+{phone}'
+                logger.debug(f"Formatted 11-digit phone to {phone}")
             elif len(phone) == 12 and phone.startswith('91'):
                 phone = f'+{phone}'
+                logger.debug(f"Formatted 12-digit phone to {phone}")
         
         return phone
     
@@ -282,16 +308,19 @@ We look forward to seeing you!
             dict: Account information or error message
         """
         if not self.client:
+            logger.error("Twilio client not initialized")
             return {'error': 'Twilio not configured'}
         
         try:
             account = self.client.api.accounts(self.account_sid).fetch()
+            logger.info(f"Retrieved Twilio account info: {account.friendly_name}")
             return {
                 'friendly_name': account.friendly_name,
                 'status': account.status,
                 'type': account.type
             }
         except Exception as e:
+            logger.error(f"Failed to retrieve Twilio account info: {e}", exc_info=True)
             return {'error': str(e)}
 
 
@@ -301,6 +330,7 @@ twilio_service = TwilioService()
 
 # Example usage and testing
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     print("🔧 Twilio Service Testing")
     print("=" * 50)
     
