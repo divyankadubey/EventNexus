@@ -9,9 +9,13 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dotenv import load_dotenv
 import random
+import logging
 
 # Load environment variables
 load_dotenv()
+
+# Get logger
+logger = logging.getLogger(__name__)
 
 
 class EmailOTPService:
@@ -26,13 +30,15 @@ class EmailOTPService:
         self.enabled = bool(self.email_user and self.email_password)
         
         if self.enabled:
-            print("✅ Email OTP service initialized successfully")
+            logger.info("✅ Email OTP service initialized successfully")
         else:
-            print("⚠️ Email OTP service not configured")
+            logger.warning("⚠️ Email OTP service not configured")
     
     def generate_otp(self, length=6):
         """Generate a random OTP"""
-        return ''.join([str(random.randint(0, 9)) for _ in range(length)])
+        otp = ''.join([str(random.randint(0, 9)) for _ in range(length)])
+        logger.debug(f"Generated OTP of length {length}")
+        return otp
     
     def send_otp(self, email, otp, user_name="User", purpose="verification"):
         """
@@ -48,9 +54,12 @@ class EmailOTPService:
             tuple: (success: bool, message: str)
         """
         if not self.enabled:
+            logger.error("Email service not configured - cannot send OTP")
             return False, "Email service not configured"
         
         try:
+            logger.info(f"Sending OTP email to {email} for {purpose}")
+            
             # Create message
             msg = MIMEMultipart('alternative')
             msg['From'] = self.email_user
@@ -140,20 +149,23 @@ class EmailOTPService:
                 server.login(self.email_user, self.email_password)
                 server.send_message(msg)
             
-            print(f"✅ Email OTP sent to {email}")
+            logger.info(f"✅ Email OTP sent successfully to {email}")
             return True, f"OTP sent successfully to {email}"
             
         except Exception as e:
-            error_msg = f"Failed to send email: {str(e)}"
-            print(f"❌ {error_msg}")
+            error_msg = f"Failed to send email to {email}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
             return False, error_msg
     
     def send_welcome_email(self, email, user_name):
         """Send welcome email to new users"""
         if not self.enabled:
+            logger.error("Email service not configured - cannot send welcome email")
             return False, "Email service not configured"
         
         try:
+            logger.info(f"Sending welcome email to {email}")
+            
             msg = MIMEMultipart('alternative')
             msg['From'] = self.email_user
             msg['To'] = email
@@ -195,10 +207,13 @@ class EmailOTPService:
                 server.login(self.email_user, self.email_password)
                 server.send_message(msg)
             
+            logger.info(f"✅ Welcome email sent to {email}")
             return True, "Welcome email sent"
             
         except Exception as e:
-            return False, str(e)
+            error_msg = f"Failed to send welcome email to {email}: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return False, error_msg
 
 
 # Initialize global service instance
@@ -207,6 +222,7 @@ email_otp_service = EmailOTPService()
 
 # Testing
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.INFO)
     print("🔧 Email OTP Service Testing")
     print("=" * 50)
     
